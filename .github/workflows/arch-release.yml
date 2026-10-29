@@ -1,11 +1,13 @@
-name: Arch Linux Release
+name: Arch Linux Build & Release
 
-# Builds Zelda on PC inside an Arch Linux container and publishes a GitHub Release when a
-# version tag like "v1.4.0" is pushed. Assets: a portable tarball, an installable Arch
-# package (.pkg.tar.zst for `pacman -U`), and a sha256 for each.
+# Builds Zelda on PC inside an Arch Linux container on every push to main (a preview CI
+# artifact only, no release) and publishes a GitHub Release when a version tag like "v1.4.0"
+# is pushed. Assets: a portable tarball, an installable Arch package (.pkg.tar.zst for
+# `pacman -U`), and a sha256 for each.
 on:
   workflow_dispatch:
   push:
+    branches: ["main"]
     tags: ["v*"]
 
 permissions:
@@ -80,7 +82,9 @@ jobs:
             build/zelda-on-pc-${{ env.VERSION }}-1-x86_64.pkg.tar.zst.sha256
           if-no-files-found: error
 
+      # Publish a release only for version tags; a plain push to main stops after the artifact.
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           name: Zelda on PC v${{ env.VERSION }} (Arch Linux)
