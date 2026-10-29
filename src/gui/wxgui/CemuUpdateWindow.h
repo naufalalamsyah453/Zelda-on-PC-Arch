@@ -68,6 +68,7 @@ private:
 #endif
 #if BOOST_OS_LINUX
 	bool WorkerThread_AppImage();
+	bool WorkerThread_Pacman();
 #endif
 #if BOOST_OS_MACOS
 	bool WorkerThread_MacBundle();

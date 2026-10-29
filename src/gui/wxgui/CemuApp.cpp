@@ -371,7 +371,8 @@ bool CemuApp::OnInit()
 	{
 		pce::ReapplyForcedConfig();
 		auto& wxc = GetWxGUIConfig();
-		wxc.check_update = false;
+		// note: the PC edition uses its own update toggle (pce::Settings::checkForUpdates,
+		// Settings > Game > Check for Updates), so the stock check_update is left alone here
 		wxc.use_discord_presence = false;
 		wxc.fullscreen_menubar = false;
 		wxc.did_show_vulkan_warning = true;

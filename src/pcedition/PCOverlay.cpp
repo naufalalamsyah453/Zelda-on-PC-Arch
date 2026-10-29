@@ -517,6 +517,8 @@ namespace pce::Overlay
 										 "Shows nearby interactive map markers directly on the HUD minimap compass during gameplay."));
 				p.items.push_back(toggle("Map: Auto-Hide Claimed", &sEdit.mapAutoHide,
 										 "Automatically hides opened treasure chests, completed shrines, activated towers and collected Korok seeds."));
+				p.items.push_back(header("Updates"));
+				p.items.push_back(toggle("Check for Updates", &sEdit.checkForUpdates, "On startup, check whether a newer version of this app is available on its release page and offer to install it."));
 				p.items.push_back(header("amiibo"));
 				p.items.push_back(button("Add amiibo File...", "Copies the .bin file of an amiibo (a dump of your figure) into the game's amiibo folder. "
 															   "When the amiibo rune looks for an amiibo, you choose one of them. The rune is turned on in the "

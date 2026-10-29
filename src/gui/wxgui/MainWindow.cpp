@@ -949,7 +949,10 @@ void MainWindow::OpenSettings()
 		m_discord.reset();
 	#endif
 
-	if(config.check_update && !m_game_launched)
+	// the PC edition has its own toggle (Settings > Game > Check for Updates); stock Cemu builds
+	// use the value behind the General settings checkbox
+	const bool check_updates = pce::IsActive() ? pce::GetSettings().checkForUpdates : config.check_update.GetValue();
+	if (check_updates && !m_game_launched)
 		m_update_available = CemuUpdateWindow::IsUpdateAvailableAsync();
 
 	if (mlc_modified)
@@ -1455,7 +1458,7 @@ void MainWindow::LoadSettings()
 	GetConfigHandle().Load();
 	const auto& config = GetWxGUIConfig();
 
-	if(config.check_update)
+	if (pce::IsActive() ? pce::GetSettings().checkForUpdates : config.check_update.GetValue())
 		m_update_available = CemuUpdateWindow::IsUpdateAvailableAsync();
 
 	if (config.window_position != Vector2i{ -1,-1 })
@@ -2150,20 +2153,8 @@ bool MainWindow::IsMenuHidden() const
 
 void MainWindow::OnTimer(wxTimerEvent& event)
 {
-	if (pce::IsActive())
-	{
-		// display mode changed in the PC settings
-		const unsigned long long rev = pce::GetSettingsRevision();
-		if (rev != m_pce_settings_rev)
-		{
-			m_pce_settings_rev = rev;
-			const int mode = pce::GetSettings().displayMode;
-			if (!pce::ForceWindowed() && mode != m_pce_display_mode)
-				ApplyPCEDisplayMode(mode);
-		}
-		UpdatePCECursor();
-		return;
-	}
+	// Poll the startup update check first: the PC edition's branch below returns early, so
+	// without this the "new version available" prompt would never appear there.
 	if(m_update_available.valid() && future_is_ready(m_update_available))
 	{
 		if(m_update_available.get())
@@ -2177,6 +2168,20 @@ void MainWindow::OnTimer(wxTimerEvent& event)
 		}
 
 		m_update_available = {};
+	}
+	if (pce::IsActive())
+	{
+		// display mode changed in the PC settings
+		const unsigned long long rev = pce::GetSettingsRevision();
+		if (rev != m_pce_settings_rev)
+		{
+			m_pce_settings_rev = rev;
+			const int mode = pce::GetSettings().displayMode;
+			if (!pce::ForceWindowed() && mode != m_pce_display_mode)
+				ApplyPCEDisplayMode(mode);
+		}
+		UpdatePCECursor();
+		return;
 	}
 
 	if (!IsFullScreen() || m_menu_visible)

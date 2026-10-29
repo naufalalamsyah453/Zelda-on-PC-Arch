@@ -23,6 +23,9 @@
 #include <curl/curl.h>
 #include <boost/tokenizer.hpp>
 #include <openssl/rand.h>
+#include <rapidjson/document.h>
+#include <wx/utils.h>
+#include "pcedition/PCEdition.h"
 
 
 wxDECLARE_EVENT(wxEVT_RESULT, wxCommandEvent);
@@ -90,37 +93,6 @@ size_t CemuUpdateWindow::WriteStringCallback(char* ptr, size_t size, size_t nmem
 	return size * nmemb;
 };
 
-static std::string CurlUrlEscape(CURL* curl, const std::string& input)
-{
-	char* escapedStr = curl_easy_escape(curl, input.c_str(), input.size());
-	std::string r(escapedStr);
-	curl_free(escapedStr);
-	return r;
-}
-
-static std::string CurlUrlUnescape(CURL* curl, std::string_view input)
-{
-	int decodedLen = 0;
-	char* decoded = curl_easy_unescape(curl, input.data(), input.size(), &decodedLen);
-	std::string r(decoded, decodedLen);
-	curl_free(decoded);
-	return r;
-}
-
-static std::string GenerateSecureRandomString()
-{
-	std::array<unsigned char, 20> bytes{};
-	if (RAND_bytes(bytes.data(), bytes.size()) != 1)
-		return "";
-	std::string result;
-	result.reserve(21);
-	for (unsigned char byte : bytes)
-	{
-		result.push_back('a' + (byte % 26));
-	}
-	return result;
-}
-
 static bool HexToBytes(const std::string& hex, std::vector<uint8>& dataOut)
 {
 	if (hex.size() % 2)
@@ -138,141 +110,132 @@ static bool HexToBytes(const std::string& hex, std::vector<uint8>& dataOut)
 	return true;
 }
 
-static bool VerifyUpdateResponseSignature(std::string_view message, std::string signatureAsHex)
+// --- helpers for the release-feed based update check --------------------------------
+
+static size_t FetchWriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
 {
-	std::vector<uint8> signatureData;
-	if (!HexToBytes(signatureAsHex, signatureData))
-		return false;
-	EVP_PKEY* key = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr, (const unsigned char*)"\xa0\x73\xda\x45\x12\x11\xd6\xe0\x2d\x7b\x1a\xb3\x69\xfd\x6c\xc5\x99\xd3\xd3\x1e\xe7\x9d\x57\x89\x2a\xe6\xe8\x40\x54\x7c\xc5\xbd", 32);
-	if (!key)
-		return false;
-	EVP_MD_CTX* context = EVP_MD_CTX_new();
-	if (!context)
-	{
-		EVP_PKEY_free(key);
-		return false;
-	}
-	bool valid = EVP_DigestVerifyInit(context, nullptr, nullptr, nullptr, key) == 1 &&
-		EVP_DigestVerify(context,signatureData.data(),signatureData.size(), reinterpret_cast<const unsigned char*>(message.data()), message.size()) == 1;
-	EVP_MD_CTX_free(context);
-	EVP_PKEY_free(key);
-	return valid;
+	((std::string*)userdata)->append(ptr, size * nmemb);
+	return size * nmemb;
 }
 
-// returns empty string for platforms which cant auto-update or dont have support for it yet
-static std::string GetPlatformUpdateIdentifier()
+// GET url into out; false on a transport error or a non-200 response
+static bool FetchUrlToString(const std::string& url, std::string& out)
 {
-	std::string identifier;
-#if BOOST_OS_LINUX
-	const char* appImagePath = std::getenv("APPIMAGE");
-	if (appImagePath && *appImagePath)
-		identifier.append("linux_appimage");
-	else
-		return "";
-#elif BOOST_OS_WINDOWS
-	identifier.append("windows");
-#elif BOOST_OS_MACOS
-	identifier.append("macos_bundle");
-#elif BOOST_OS_BSD
-	return ""; // BSD users must update from source
-#else
-	return "";
-#endif
-#if defined(__aarch64__)
-	identifier.append("_aarch64");
-#elif defined(ARCH_X86_64)
-	identifier.append("_x86_64");
-#else
-	return "";
-#endif
-	return identifier;
-}
-
-// returns true if update is available and sets output parameters
-bool CemuUpdateWindow::QueryUpdateInfo(std::string& downloadUrlOut, std::string& changelogUrlOut, std::array<uint8, 32>& fileSha256Out)
-{
-	std::string rdString = GenerateSecureRandomString();
-	if (rdString.empty())
+	out.clear();
+	CURL* curl = curl_easy_init();
+	if (!curl)
 		return false;
-	std::string buffer;
-	std::string urlStr("https://cemu.info/api2/version.php?v=");
-	auto* curl = curl_easy_init();
-	urlStr.append(CurlUrlEscape(curl, BUILD_VERSION_STRING));
-
-	std::string platformIdentifier = GetPlatformUpdateIdentifier();
-	if (platformIdentifier.empty())
-		return false;
-
-	urlStr.append("&platform=");
-	urlStr.append(platformIdentifier);
-
-	const auto& config = GetWxGUIConfig();
-	urlStr.append("&s=");
-	urlStr.append(rdString);
-	if(config.receive_untested_updates)
-		urlStr.append("&allowNewUpdates=1");
-
-	curl_easy_setopt(curl, CURLOPT_URL, urlStr.c_str());
-	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteStringCallback);
+	curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &out);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, FetchWriteCallback);
+	// GitHub's API refuses requests without a user agent
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, BUILD_VERSION_WITH_NAME_STRING);
 	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
 	curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
 	curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NATIVE_CA);
-
-	bool result = false;
-	CURLcode cr = curl_easy_perform(curl);
-	if (cr == CURLE_OK)
-	{
-		long http_code = 0;
-		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-		if (http_code != 0 && http_code != 200)
-		{
-			cemuLog_log(LogType::Force, "Update check failed (http code: {})", http_code);
-			cemu_assert_debug(false);
-			return false;
-		}
-
-		std::vector<std::string> tokens;
-		const boost::char_separator<char> sep{ "|" };
-		for (const auto& token : boost::tokenizer(buffer, sep))
-			tokens.emplace_back(token);
-
-		if (tokens.size() >= 5 && tokens[0] == "UPDATE")
-		{
-			// first token: "UPDATE"
-			// second token: Download URL
-			// third token: Changelog URL
-			// fourth token: SHA256
-			// fifth token: Signature
-			// we allow more tokens in case we ever want to add extra information for future releases
-			downloadUrlOut = CurlUrlUnescape(curl, tokens[1]);
-			changelogUrlOut = CurlUrlUnescape(curl, tokens[2]);
-			if (!downloadUrlOut.empty() && !changelogUrlOut.empty())
-				result = true;
-			// check signature
-			std::string signedMessage = platformIdentifier.append("|").append(tokens[0]).append("|").append(tokens[1]).append("|").append(tokens[2]).append("|").append(tokens[3]).append("|").append(rdString);
-			bool isValidSignature = VerifyUpdateResponseSignature(signedMessage, tokens[4]);
-			if (!isValidSignature)
-			{
-				cemuLog_log(LogType::Force, "Failed server signature check");
-				return false;
-			}
-			std::vector<uint8> fileShaVec;
-			if (!HexToBytes(tokens[3], fileShaVec))
-				return false;
-			if (fileShaVec.size() != 32)
-				return false;
-			std::memcpy(fileSha256Out.data(), fileShaVec.data(), 32);
-		}
-	}
-	else
-	{
-		cemuLog_log(LogType::Force, "Update check failed with CURL error {}", (int)cr);
-		cemu_assert_debug(false);
-	}
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
+	const CURLcode cr = curl_easy_perform(curl);
+	long http_code = 0;
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 	curl_easy_cleanup(curl);
-	return result;
+	return cr == CURLE_OK && (http_code == 200 || http_code == 0);
+}
+
+static bool EndsWith(const std::string& s, const std::string& suffix)
+{
+	return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// "v1.4.2" against "v1.4.1": is the candidate a strictly newer release than the current one?
+static bool IsVersionNewer(const std::string& candidate, const std::string& current)
+{
+	auto parse = [](const std::string& v) {
+		std::array<int, 3> r{ 0, 0, 0 };
+		size_t pos = (!v.empty() && (v[0] == 'v' || v[0] == 'V')) ? 1 : 0;
+		for (int i = 0; i < 3 && pos < v.size(); i++)
+		{
+			size_t end = pos;
+			while (end < v.size() && v[end] >= '0' && v[end] <= '9')
+				end++;
+			if (end == pos)
+				break;
+			r[i] = std::atoi(v.substr(pos, end - pos).c_str());
+			pos = end + 1; // skip the separator
+		}
+		return r;
+	};
+	return parse(candidate) > parse(current);
+}
+
+// returns true if a newer release than the running build exists on the project's release page
+// and fills in the Arch package to install, the release page and the package's sha256
+bool CemuUpdateWindow::QueryUpdateInfo(std::string& downloadUrlOut, std::string& changelogUrlOut, std::array<uint8, 32>& fileSha256Out)
+{
+	static const char* kLatestRelease = "https://api.github.com/repos/naufalalamsyah453/Zelda-on-PC-Arch/releases/latest";
+
+	std::string json;
+	if (!FetchUrlToString(kLatestRelease, json))
+	{
+		cemuLog_log(LogType::Force, "Update check failed (release feed unreachable)");
+		return false;
+	}
+
+	rapidjson::Document d;
+	d.Parse(json.data(), json.size());
+	if (d.HasParseError() || !d.IsObject())
+	{
+		cemuLog_log(LogType::Force, "Update check: release feed is not valid JSON");
+		return false;
+	}
+
+	const std::string tag = (d.HasMember("tag_name") && d["tag_name"].IsString()) ? d["tag_name"].GetString() : "";
+	if (tag.empty() || !IsVersionNewer(tag, pce::kEditionVersion))
+		return false; // up to date (or running a newer build than the feed offers)
+
+	std::string pkgUrl, shaUrl, releasePage;
+	if (d.HasMember("html_url") && d["html_url"].IsString())
+		releasePage = d["html_url"].GetString();
+	if (d.HasMember("assets") && d["assets"].IsArray())
+	{
+		for (const auto& asset : d["assets"].GetArray())
+		{
+			if (!asset.IsObject() || !asset.HasMember("name") || !asset["name"].IsString() ||
+				!asset.HasMember("browser_download_url") || !asset["browser_download_url"].IsString())
+				continue;
+			const std::string name = asset["name"].GetString();
+			const std::string url = asset["browser_download_url"].GetString();
+			if (EndsWith(name, ".pkg.tar.zst.sha256"))
+				shaUrl = url;
+			else if (EndsWith(name, ".pkg.tar.zst"))
+				pkgUrl = url;
+		}
+	}
+	if (pkgUrl.empty() || shaUrl.empty())
+	{
+		cemuLog_log(LogType::Force, "Update check: release {} carries no Arch package", tag);
+		return false;
+	}
+
+	// the published .sha256 sidecar: "<hex digest>  <file name>"
+	std::string shaText;
+	if (!FetchUrlToString(shaUrl, shaText))
+	{
+		cemuLog_log(LogType::Force, "Update check: could not fetch the package checksum");
+		return false;
+	}
+	const std::string digest = shaText.substr(0, shaText.find_first_of(" \t\r\n"));
+	std::vector<uint8> bytes;
+	if (!HexToBytes(digest, bytes) || bytes.size() != 32)
+	{
+		cemuLog_log(LogType::Force, "Update check: published checksum is not a sha256 digest");
+		return false;
+	}
+
+	downloadUrlOut = pkgUrl;
+	changelogUrlOut = releasePage;
+	std::memcpy(fileSha256Out.data(), bytes.data(), 32);
+	return true;
 }
 
 std::future<bool> CemuUpdateWindow::IsUpdateAvailableAsync()
@@ -576,6 +539,44 @@ bool CemuUpdateWindow::WorkerThread_AppImage()
 	wxCopyFile (wxString::FromUTF8(_pathToUtf8(updateSrcFile)), wxAppPath);
 	return true;
 }
+
+bool CemuUpdateWindow::WorkerThread_Pacman()
+{
+	// download the Arch package (verified against the sha256 the release published), then hand it
+	// to the system package manager; pkexec raises the admin password prompt
+	const auto tmppath = fs::temp_directory_path() / L"zelda-on-pc-update";
+	std::error_code ec;
+	if (exists(tmppath, ec))
+		remove_all(tmppath, ec);
+	const fs::path pkgFile = tmppath / L"update.pkg.tar.zst";
+	if (!DownloadCemuUpdateFile(m_downloadUrl, pkgFile))
+		return false;
+	if (m_order == WorkerOrder::Exit)
+		return false;
+
+	// "Applying update..." and the cancel button disabled while the package manager runs
+	SubmitWorkerResult(Result::ExtractSuccess);
+
+	// --noconfirm skips pacman's second "proceed with installation?" prompt, because pkexec
+	// already authenticated the user (the temp path is quoted in case the directory has spaces)
+	wxString cmd = "pkexec /usr/bin/pacman -U --noconfirm \"";
+	cmd += wxString::FromUTF8(_pathToUtf8(pkgFile));
+	cmd += "\"";
+	const long ret = wxExecute(cmd, wxEXEC_SYNC);
+
+	fs::remove_all(tmppath, ec);
+	if (ret != 0)
+	{
+		cemuLog_log(LogType::Force, "Installing the update failed (exit code {})", ret);
+		return false;
+	}
+
+	// the package replaced the read-only copy in /opt; restart through the launcher so it copies
+	// the new binary into the per-user run directory and starts the new version
+	const fs::path launcher = "/usr/bin/zelda-on-pc";
+	m_restartFile = fs::exists(launcher) ? launcher : ActiveSettings::GetExecutablePath();
+	return true;
+}
 #endif
 
 #if BOOST_OS_MACOS
@@ -745,7 +746,7 @@ void CemuUpdateWindow::WorkerThread()
 #if BOOST_OS_WINDOWS
 			r = WorkerThread_Windows();
 #elif BOOST_OS_LINUX
-			r = WorkerThread_AppImage();
+			r = std::getenv("APPIMAGE") ? WorkerThread_AppImage() : WorkerThread_Pacman();
 #elif BOOST_OS_BSD
 			// dummy placeholder on BSD for now
 #elif BOOST_OS_MACOS

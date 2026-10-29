@@ -9,7 +9,7 @@
 namespace pce
 {
 	constexpr const char* kGameTitle = "The Legend of Zelda: Breath of the Wild";
-	constexpr const char* kEditionVersion = "v1.4.1";
+	constexpr const char* kEditionVersion = "v1.4.2";
 	// the game code this edition is written for: update 1.5.0 (title version 208, the same executable in all regions)
 	constexpr uint32 kRequiredUpdateVersion = 208;
 

@@ -150,6 +150,9 @@ namespace pce
 		int temperatureUnit = 0;            // 0 as the game decides (Fahrenheit for US English), 1 Celsius, 2 Fahrenheit
 		int inventoryPageTurn = 1;          // category clicks / mouse wheel in the inventory: 0 instant, 1 short slide, 2 the game's slide
 
+		// updates
+		bool checkForUpdates = true;       // check the project's release feed on startup and offer to install a new version
+
 		// interactive map (Sheikah Slate map overlay)
 		bool mapEnabled = true;             // master toggle: completely enable or disable the interactive map
 		bool mapOverlay = true;             // show the interactive map overlay on the world map

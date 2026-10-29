@@ -238,6 +238,7 @@ namespace pce
 			s.temperatureUnit = std::clamp(s.temperatureUnit, 0, 2);
 			Get(m, "Game", "InventoryPageTurn", s.inventoryPageTurn);
 			s.inventoryPageTurn = std::clamp(s.inventoryPageTurn, 0, 2);
+			Get(m, "Game", "CheckForUpdates", s.checkForUpdates);
 			Get(m, "Map", "Enabled", s.mapEnabled);
 			Get(m, "Map", "Overlay", s.mapOverlay);
 			Get(m, "Map", "Minimap", s.mapMinimap);
@@ -333,7 +334,8 @@ namespace pce
 		o << "Path=" << s.gamePath << "\n";
 		o << "Language=" << s.language << "\n";
 		o << "TemperatureUnit=" << s.temperatureUnit << "\n";
-		o << "InventoryPageTurn=" << s.inventoryPageTurn << "\n\n";
+		o << "InventoryPageTurn=" << s.inventoryPageTurn << "\n";
+		o << "CheckForUpdates=" << b(s.checkForUpdates) << "\n\n";
 		o << "[Map]\n";
 		o << "Enabled=" << b(s.mapEnabled) << "\n";
 		o << "Overlay=" << b(s.mapOverlay) << "\n";
