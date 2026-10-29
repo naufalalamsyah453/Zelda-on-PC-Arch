@@ -1,7 +1,8 @@
 name: Arch Linux Release
 
-# Builds Zelda on PC inside an Arch Linux container and publishes a GitHub Release
-# (portable tarball + sha256) when a version tag like "v1.4.0" is pushed.
+# Builds Zelda on PC inside an Arch Linux container and publishes a GitHub Release when a
+# version tag like "v1.4.0" is pushed. Assets: a portable tarball, an installable Arch
+# package (.pkg.tar.zst for `pacman -U`), and a sha256 for each.
 on:
   workflow_dispatch:
   push:
@@ -62,8 +63,10 @@ jobs:
         run: |
           version="$(grep -oP 'kEditionVersion = "v\K[0-9.]+' src/pcedition/PCEdition.h)"
           bash tools/package_linux.sh "$version"
+          bash tools/package_arch.sh "$version"
           cd build
           sha256sum "ZeldaOnPC-$version-linux-x86_64.tar.gz" > "ZeldaOnPC-$version-linux-x86_64.tar.gz.sha256"
+          sha256sum "zelda-on-pc-$version-1-x86_64.pkg.tar.zst" > "zelda-on-pc-$version-1-x86_64.pkg.tar.zst.sha256"
           echo "VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Upload artifact (always)
@@ -73,6 +76,8 @@ jobs:
           path: |
             build/ZeldaOnPC-${{ env.VERSION }}-linux-x86_64.tar.gz
             build/ZeldaOnPC-${{ env.VERSION }}-linux-x86_64.tar.gz.sha256
+            build/zelda-on-pc-${{ env.VERSION }}-1-x86_64.pkg.tar.zst
+            build/zelda-on-pc-${{ env.VERSION }}-1-x86_64.pkg.tar.zst.sha256
           if-no-files-found: error
 
       - name: Create GitHub Release
@@ -83,3 +88,5 @@ jobs:
           files: |
             build/ZeldaOnPC-${{ env.VERSION }}-linux-x86_64.tar.gz
             build/ZeldaOnPC-${{ env.VERSION }}-linux-x86_64.tar.gz.sha256
+            build/zelda-on-pc-${{ env.VERSION }}-1-x86_64.pkg.tar.zst
+            build/zelda-on-pc-${{ env.VERSION }}-1-x86_64.pkg.tar.zst.sha256
