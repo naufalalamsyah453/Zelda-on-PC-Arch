@@ -404,12 +404,14 @@ namespace pce
 			// the base game itself was given (folder, archive or disc image): update and DLC are usually right next to it
 			if (ReadLooseTitle(root) || IsArchive(root) || IsDiscImage(root))
 				CollectTitles(root.parent_path(), 1, titles);
-			const GameTitle* base = nullptr;
+			// a copy, not a pointer into titles: the Cemu-mlc fallback below appends to titles and may
+			// reallocate it, which would leave a pointer dangling (the base game appeared "not found")
+			std::optional<GameTitle> base;
 			for (auto& t : titles)
 			{
 				if ((uint32)(t.titleId >> 32) == kHighBase)
 				{
-					base = &t;
+					base = t;
 					break;
 				}
 			}
