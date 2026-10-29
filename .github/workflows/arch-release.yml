@@ -1,0 +1,85 @@
+name: Arch Linux Release
+
+# Builds Zelda on PC inside an Arch Linux container and publishes a GitHub Release
+# (portable tarball + sha256) when a version tag like "v1.4.0" is pushed.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      # git is required by actions/checkout (submodules) and is not in the base image.
+      - name: Prepare pacman keyring and install git
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Sy --noconfirm --needed archlinux-keyring
+          pacman -Syu --noconfirm --needed git
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel clang llvm cmake ninja nasm git curl zip unzip tar xz \
+            pkgconf python \
+            bluez-libs freeglut glm gtk3 libgcrypt libpulse libsecret systemd \
+            linux-headers wayland wayland-protocols libusb \
+            libx11 libxext libxrandr libxcursor libxi libxss libxtst libxkbcommon \
+            mesa libdrm vulkan-headers
+
+      - name: vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/vcpkg
+          key: vcpkg-archlinux-${{ hashFiles('vcpkg.json', 'dependencies/vcpkg_overlay_ports*/**') }}-${{ github.run_id }}
+          restore-keys: vcpkg-archlinux-${{ hashFiles('vcpkg.json', 'dependencies/vcpkg_overlay_ports*/**') }}-
+
+      - name: Configure
+        env:
+          # Use the system cmake/ninja instead of the older ones vcpkg would download.
+          VCPKG_FORCE_SYSTEM_BINARIES: "1"
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=release
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Package
+        run: |
+          version="$(grep -oP 'kEditionVersion = "v\K[0-9.]+' src/pcedition/PCEdition.h)"
+          bash tools/package_linux.sh "$version"
+          cd build
+          sha256sum "ZeldaOnPC-$version-linux-x86_64.tar.gz" > "ZeldaOnPC-$version-linux-x86_64.tar.gz.sha256"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Upload artifact (always)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZeldaOnPC-${{ env.VERSION }}-linux-x86_64
+          path: |
+            build/ZeldaOnPC-${{ env.VERSION }}-linux-x86_64.tar.gz
+            build/ZeldaOnPC-${{ env.VERSION }}-linux-x86_64.tar.gz.sha256
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Zelda on PC v${{ env.VERSION }} (Arch Linux)
+          generate_release_notes: true
+          files: |
+            build/ZeldaOnPC-${{ env.VERSION }}-linux-x86_64.tar.gz
+            build/ZeldaOnPC-${{ env.VERSION }}-linux-x86_64.tar.gz.sha256
